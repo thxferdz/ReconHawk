@@ -31,6 +31,18 @@ DEFAULT_USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
 ]
 
+# --- Wordlist Internal Default ---
+DEFAULT_INTERNAL_WORDLIST = [
+    "admin", "login", "user", "test", "tmp", "temp", "backup", "dev", "prod",
+    "api", "v1", "v2", "config", "uploads", "assets", "static", "js", "css",
+    "images", "img", "files", "docs", "documents", "phpmyadmin", "webmail",
+    "administrator", "moderator", "panel", "control", "cpanel", "index.php",
+    "index.html", "default.html", "default.aspx", "robots.txt", ".env",
+    ".htaccess", ".htpasswd", "wp-admin", "wp-login.php", "xmlrpc.php",
+    "CHANGELOG.md", "README.md", "LICENSE"
+]
+
+
 # --- Inisialisasi Antrian dan Kunci ---
 url_queue = Queue()
 print_lock = threading.Lock()
@@ -48,8 +60,8 @@ def display_banner(no_color_flag):
                         R E C O N H A W K
 ======================================================================
                          Simple & Fast
-                        ReconHawk v1.1
-    """
+                        ReconHawk v1.2 
+    """ # Versi diperbarui
     if no_color_flag:
         print(banner_text)
     else:
@@ -62,14 +74,14 @@ def check_path(target_url, path_to_check, current_depth, args_namespace):
     Memeriksa path tertentu pada target URL.
     Args:
         target_url (str): URL dasar target.
-        path_to_check (str): Path yang akan diperiksa (bisa tuple (path, depth) untuk rekursi).
+        path_to_check (str): Path yang akan diperiksa.
         current_depth (int): Kedalaman rekursi saat ini untuk path ini.
         args_namespace (argparse.Namespace): Namespace argumen dari parser.
     """
     global found_count, processed_count, total_paths, output_file_handle, original_wordlist_for_recursion
 
     full_url = urljoin(target_url, path_to_check.lstrip('/'))
-    user_agent = random.choice(args_namespace.user_agents_list) # Ambil dari namespace
+    user_agent = random.choice(args_namespace.user_agents_list)
 
     try:
         headers = {'User-Agent': user_agent}
@@ -80,8 +92,8 @@ def check_path(target_url, path_to_check, current_depth, args_namespace):
 
         with print_lock:
             processed_count += 1
+            # Pastikan total_paths tidak nol sebelum melakukan pembagian
             progress_percent = (processed_count / total_paths) * 100 if total_paths > 0 else 0
-            # Pesan progres yang lebih informatif, termasuk kedalaman jika rekursif
             progress_msg = f"Progres: {processed_count}/{total_paths} ({progress_percent:.2f}%)"
             if args_namespace.recursive:
                 progress_msg += f" | Kedalaman Saat Ini: {current_depth}"
@@ -94,12 +106,10 @@ def check_path(target_url, path_to_check, current_depth, args_namespace):
                 found_count += 1
                 output_line = f"[{time.strftime('%H:%M:%S')}] [{status_code}] {full_url} (Ukuran: {content_length} B)"
                 
-                # Simpan ke file jika diminta
                 if output_file_handle:
                     output_file_handle.write(output_line + "\n")
-                    output_file_handle.flush() # Pastikan langsung ditulis
+                    output_file_handle.flush()
 
-                # Tampilkan ke konsol
                 if args_namespace.no_color:
                     print("\n" + output_line)
                 else:
@@ -112,62 +122,67 @@ def check_path(target_url, path_to_check, current_depth, args_namespace):
                     elif 500 <= status_code < 600: color_code = Colors.RED + Colors.BOLD
                     print(f"\n{color_code}{output_line}{Colors.ENDC}")
                 
-                # Logika Rekursi
-                # Cek apakah ini direktori (biasanya status 200 dan diakhiri dengan '/')
-                # atau jika status redirect (301, 302) ke path yang diakhiri '/'
                 is_directory_like = (path_to_check.endswith('/') and status_code in [200, 204, 401, 403]) or \
                                     (status_code in [301, 302, 307] and response.url.endswith('/'))
 
                 if args_namespace.recursive and is_directory_like and current_depth < args_namespace.recursion_depth:
-                    # print(f"\n{Colors.BLUE if not args_namespace.no_color else ''}[RECURSIVE] Menemukan direktori: {full_url} pada kedalaman {current_depth}. Memulai scan rekursif...{Colors.ENDC if not args_namespace.no_color else ''}")
                     for entry in original_wordlist_for_recursion:
-                        # Bentuk path baru relatif terhadap direktori yang ditemukan
                         new_recursive_path = urljoin(path_to_check, entry.lstrip('/'))
                         url_queue.put((new_recursive_path, current_depth + 1))
-                        total_paths += 1 # Perbarui total path karena ada path baru dari rekursi
+                        total_paths += 1 # Perbarui total_paths di sini juga
             
             if args_namespace.delay > 0:
                 time.sleep(args_namespace.delay)
 
     except requests.exceptions.RequestException:
         with print_lock:
-            processed_count += 1 # Tetap hitung sebagai terproses
-            # (opsional: log error ke file atau konsol jika verbose)
+            processed_count += 1
     except Exception:
         with print_lock:
-            processed_count += 1 # Tetap hitung sebagai terproses
-            # (opsional: log error)
+            processed_count += 1
 
 # --- Fungsi Worker untuk Thread ---
 def worker(target_url, args_namespace_for_worker):
     """Fungsi yang dijalankan oleh setiap thread."""
     while not url_queue.empty():
         try:
-            # Item antrian sekarang adalah tuple (path, depth)
             path_item, depth_item = url_queue.get(timeout=1) 
             check_path(target_url, path_item, depth_item, args_namespace_for_worker)
             url_queue.task_done()
         except Queue.Empty: 
             break 
-        except Exception as e:
-            with print_lock:
-                # Cetak error worker jika perlu, tapi hindari terlalu verbose
-                # print(f"\n{Colors.RED if not args_namespace_for_worker.no_color else ''}Error di worker: {e}{Colors.ENDC if not args_namespace_for_worker.no_color else ''}")
-                pass
-            url_queue.task_done() # Pastikan task_done dipanggil meskipun ada error
+        except Exception:
+            pass 
+            url_queue.task_done()
 
 # --- Fungsi Utama ---
 def main():
     """Fungsi utama untuk menjalankan alat."""
     global total_paths, output_file_handle, original_wordlist_for_recursion
 
-    parser = argparse.ArgumentParser(description="ReconHawk - Alat Reconnaissance Web berbasis Python.")
+    epilog_text = """
+Contoh Penggunaan:
+  python3 ReconHawk.py -u http://example.com 
+  (Menggunakan wordlist internal default)
+
+  python3 ReconHawk.py -u http://example.com -w /usr/share/wordlists/dirb/common.txt
+  (Menggunakan wordlist kustom)
+  
+  python3 ReconHawk.py -u https://target.site -w my_list.txt -t 20 -x php,js -o results.txt -r -d 3
+  python3 ReconHawk.py -u http://testphp.vulnweb.com --delay 0.1
+"""
+
+    parser = argparse.ArgumentParser(
+        description="ReconHawk - Alat Reconnaissance Web berbasis Python.",
+        epilog=epilog_text,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("-u", "--url", required=True, help="URL target (contoh: http://example.com)")
-    parser.add_argument("-w", "--wordlist", required=True, help="Path ke file wordlist")
+    parser.add_argument("-w", "--wordlist", help="Path ke file wordlist (opsional, jika tidak ada, wordlist internal akan digunakan)") # Diubah menjadi opsional
     parser.add_argument("-t", "--threads", type=int, default=10, help="Jumlah thread yang akan digunakan (default: 10)")
     parser.add_argument("-a", "--user-agent", help="User-Agent kustom. Jika tidak disetel, akan dipilih secara acak dari daftar default.")
     parser.add_argument("-x", "--extensions", help="Ekstensi file yang akan ditambahkan, dipisahkan koma (contoh: php,html,txt)")
-    parser.add_argument("-s", "--status-codes", default="200,204,301,302,307,401,403,500", help="Status code yang dianggap menarik, dipisahkan koma (default: 200,204,301,302,307,401,403,500)")
+    parser.add_argument("-s", "--status-codes", default="200,204,301,302,307,401,403,500", help="Status code yang dianggap menarik, dipisahkan koma")
     parser.add_argument("--timeout", type=int, default=10, help="Waktu timeout untuk request dalam detik (default: 10)")
     parser.add_argument("--delay", type=float, default=0, help="Waktu tunda antar request per thread dalam detik (default: 0)")
     parser.add_argument("--no-color", action="store_true", help="Nonaktifkan output berwarna")
@@ -175,24 +190,20 @@ def main():
     parser.add_argument("-r", "--recursive", action="store_true", help="Aktifkan scanning rekursif pada direktori yang ditemukan")
     parser.add_argument("-d", "--recursion-depth", type=int, default=2, help="Kedalaman maksimum untuk scanning rekursif (default: 2, hanya berlaku jika --recursive aktif)")
 
-
     args = parser.parse_args()
 
     display_banner(args.no_color)
 
-    # Simpan user agents list ke dalam args namespace untuk akses mudah di worker/check_path
     if args.user_agent:
         args.user_agents_list = [args.user_agent]
     else:
         args.user_agents_list = DEFAULT_USER_AGENTS
     
-    # Simpan interesting status codes list ke dalam args namespace
     try:
         args.interesting_status_codes_list = [int(code.strip()) for code in args.status_codes.split(',')]
     except ValueError:
         print(f"{Colors.RED if not args.no_color else ''}[!] Format status code tidak valid. Harap gunakan angka yang dipisahkan koma.{Colors.ENDC if not args.no_color else ''}")
         sys.exit(1)
-
 
     if not args.url.startswith("http://") and not args.url.startswith("https://"):
         print(f"{Colors.RED if not args.no_color else ''}[!] URL tidak valid. Harap sertakan skema (http:// atau https://).{Colors.ENDC if not args.no_color else ''}")
@@ -200,50 +211,51 @@ def main():
     
     target_url = args.url if args.url.endswith('/') else args.url + '/'
 
-    # Buka file output jika nama file diberikan
     if args.output:
         try:
             output_file_handle = open(args.output, "w", encoding='utf-8')
             print(f"{Colors.BLUE if not args.no_color else ''}[*] Hasil akan disimpan di: {args.output}{Colors.ENDC if not args.no_color else ''}")
         except IOError as e:
             print(f"{Colors.RED if not args.no_color else ''}[!] Tidak dapat membuka file output {args.output}: {e}{Colors.ENDC if not args.no_color else ''}")
-            output_file_handle = None # Set ke None jika gagal dibuka
+            output_file_handle = None
 
-    extensions_to_check = []
-    if args.extensions:
-        extensions_to_check = [ext.strip().lstrip('.') for ext in args.extensions.split(',')] 
+    # Memuat wordlist: dari file jika diberikan, atau gunakan wordlist internal
+    wordlist_source_message = ""
+    if args.wordlist:
+        try:
+            with open(args.wordlist, "r", encoding='utf-8', errors='ignore') as f:
+                original_wordlist_for_recursion = [line.strip() for line in f if line.strip()]
+            if not original_wordlist_for_recursion:
+                raise ValueError(f"Wordlist kustom '{args.wordlist}' kosong.")
+            wordlist_source_message = f"Wordlist Kustom     : {args.wordlist}"
+        except FileNotFoundError:
+            print(f"{Colors.RED if not args.no_color else ''}[!] File wordlist kustom tidak ditemukan: {args.wordlist}{Colors.ENDC if not args.no_color else ''}")
+            sys.exit(1)
+        except ValueError as e:
+            print(f"{Colors.RED if not args.no_color else ''}[!] Error: {e}{Colors.ENDC if not args.no_color else ''}")
+            sys.exit(1)
+    else:
+        original_wordlist_for_recursion = DEFAULT_INTERNAL_WORDLIST
+        wordlist_source_message = "Wordlist            : Internal Default"
 
-    try:
-        with open(args.wordlist, "r", encoding='utf-8', errors='ignore') as f:
-            # Simpan wordlist asli untuk rekursi
-            original_wordlist_for_recursion = [line.strip() for line in f if line.strip()]
-        if not original_wordlist_for_recursion: # Cek jika wordlist kosong setelah dibaca
-            raise ValueError("Wordlist kosong.")
-    except FileNotFoundError:
-        print(f"{Colors.RED if not args.no_color else ''}[!] File wordlist tidak ditemukan: {args.wordlist}{Colors.ENDC if not args.no_color else ''}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"{Colors.RED if not args.no_color else ''}[!] Error: {e}{Colors.ENDC if not args.no_color else ''}")
-        sys.exit(1)
 
-    # Mengisi antrian awal dengan path dari wordlist (kedalaman 0)
     for path_entry in original_wordlist_for_recursion:
-        # Item antrian adalah tuple (path, depth)
-        url_queue.put((path_entry, 0)) # Kedalaman awal 0
+        url_queue.put((path_entry, 0))
         if not path_entry.endswith('/'):
              url_queue.put((path_entry + "/", 0))
 
-        if extensions_to_check:
+        if args.extensions:
+            extensions_to_check = [ext.strip().lstrip('.') for ext in args.extensions.split(',')]
             for ext in extensions_to_check:
                 url_queue.put((f"{path_entry}.{ext}", 0))
 
-    total_paths = url_queue.qsize()
+    total_paths = url_queue.qsize() # Hitung total_paths setelah antrian diisi
     if total_paths == 0:
-        print(f"{Colors.YELLOW if not args.no_color else ''}[!] Wordlist kosong atau tidak ada path yang valid untuk diproses.{Colors.ENDC if not args.no_color else ''}")
+        print(f"{Colors.YELLOW if not args.no_color else ''}[!] Tidak ada path untuk diproses (wordlist mungkin kosong atau bermasalah).{Colors.ENDC if not args.no_color else ''}")
         sys.exit(0)
 
     print(f"{Colors.HEADER if not args.no_color else ''}[*] Target URL          : {target_url}{Colors.ENDC if not args.no_color else ''}")
-    print(f"{Colors.HEADER if not args.no_color else ''}[*] Wordlist            : {args.wordlist}{Colors.ENDC if not args.no_color else ''}")
+    print(f"{Colors.HEADER if not args.no_color else ''}[*] {wordlist_source_message}{Colors.ENDC if not args.no_color else ''}")
     print(f"{Colors.HEADER if not args.no_color else ''}[*] Threads             : {args.threads}{Colors.ENDC if not args.no_color else ''}")
     print(f"{Colors.HEADER if not args.no_color else ''}[*] Rekursif            : {'Aktif' if args.recursive else 'Tidak Aktif'}{Colors.ENDC if not args.no_color else ''}")
     if args.recursive:
@@ -256,7 +268,6 @@ def main():
 
     threads = []
     for _ in range(args.threads):
-        # Kirim seluruh namespace args ke worker
         thread = threading.Thread(target=worker, args=(target_url, args), daemon=True)
         threads.append(thread)
         thread.start()
@@ -265,7 +276,7 @@ def main():
     
     end_time = time.time()
     
-    sys.stdout.write("\r" + " " * 100 + "\r") # Hapus baris progres yang lebih panjang
+    sys.stdout.write("\r" + " " * 100 + "\r")
     sys.stdout.flush()
 
     print(f"\n{Colors.BLUE if not args.no_color else ''}[{time.strftime('%H:%M:%S')}] Scanning selesai dalam {end_time - start_time:.2f} detik.{Colors.ENDC if not args.no_color else ''}")
@@ -280,6 +291,6 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(f"\n\n{Colors.YELLOW if '--no-color' not in sys.argv else ''}[!] Proses dihentikan oleh pengguna.{Colors.ENDC if '--no-color' not in sys.argv else ''}")
-        if output_file_handle: # Pastikan file ditutup jika ada interupsi
+        if output_file_handle:
             output_file_handle.close()
         sys.exit(0)
