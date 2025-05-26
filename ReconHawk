@@ -60,7 +60,7 @@ def display_banner(no_color_flag):
                         R E C O N H A W K
 ======================================================================
                          Simple & Fast
-                        ReconHawk v1.2 
+                        ReconHawk v1.1 
     """ # Versi diperbarui
     if no_color_flag:
         print(banner_text)
